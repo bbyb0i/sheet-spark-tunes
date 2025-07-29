@@ -1,15 +1,33 @@
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { TrendingUp, Music, Zap } from 'lucide-react';
-import { mockData } from '@/data/mockData';
+import { TrendingUp, Music, Zap, RefreshCw } from 'lucide-react';
+import { mockData, createZukeneeArtist, convertGoogleSheetsToTikTokSound } from '@/data/mockData';
+import { useZukeneeData } from '@/hooks/useZukeneeData';
+import { Artist } from '@/types/tiktok';
 
 const Index = () => {
   const navigate = useNavigate();
+  const { data: zukeneeSheetData, loading: zukeneeLoading, error: zukeneeError, refetch } = useZukeneeData();
+  const [artists, setArtists] = useState<Record<'zukenee' | 'bnyx', Artist>>(mockData);
 
-  const totalSpikes = Object.values(mockData).reduce((sum, artist) => sum + artist.totalSpikes, 0);
-  const totalSounds = Object.values(mockData).reduce((sum, artist) => sum + artist.sounds.length, 0);
-  const activeSpikesSounds = Object.values(mockData).reduce((sum, artist) => 
+  // Update Zukenee data when Google Sheets data is loaded
+  useEffect(() => {
+    if (zukeneeSheetData && zukeneeSheetData.length > 0) {
+      const zukeneeData = convertGoogleSheetsToTikTokSound(zukeneeSheetData);
+      const zukeneeArtist = createZukeneeArtist(zukeneeData);
+      
+      setArtists(prev => ({
+        ...prev,
+        zukenee: zukeneeArtist
+      }));
+    }
+  }, [zukeneeSheetData]);
+
+  const totalSpikes = Object.values(artists).reduce((sum, artist) => sum + artist.totalSpikes, 0);
+  const totalSounds = Object.values(artists).reduce((sum, artist) => sum + artist.sounds.length, 0);
+  const activeSpikesSounds = Object.values(artists).reduce((sum, artist) => 
     sum + artist.sounds.filter(sound => sound.isSpike).length, 0
   );
 
@@ -19,12 +37,32 @@ const Index = () => {
       <div className="bg-gradient-tiktok text-primary-foreground">
         <div className="container mx-auto px-4 py-8">
           <div className="text-center">
-            <h1 className="text-4xl md:text-5xl font-bold mb-4">
-              TikTok Sound Tracker
-            </h1>
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <h1 className="text-4xl md:text-5xl font-bold">
+                TikTok Sound Tracker
+              </h1>
+              {zukeneeLoading && (
+                <RefreshCw className="h-6 w-6 animate-spin" />
+              )}
+            </div>
             <p className="text-lg md:text-xl opacity-90 mb-6">
               Real-time analytics for trending sounds and viral spikes
             </p>
+            
+            {zukeneeError && (
+              <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-3 mb-4 max-w-md mx-auto">
+                <p className="text-sm">⚠️ Google Sheets connection error. Using fallback data.</p>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={refetch}
+                  className="mt-2 text-xs"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  Retry
+                </Button>
+              </div>
+            )}
             
             {/* Quick Stats */}
             <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
@@ -63,25 +101,33 @@ const Index = () => {
               </div>
               
               <div>
-                <h3 className="text-2xl font-bold mb-2">Zukenee</h3>
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <h3 className="text-2xl font-bold">Zukenee</h3>
+                  {!zukeneeLoading && !zukeneeError && zukeneeSheetData.length > 0 && (
+                    <div className="bg-green-500 rounded-full w-3 h-3" title="Live Google Sheets data" />
+                  )}
+                  {zukeneeError && (
+                    <div className="bg-amber-500 rounded-full w-3 h-3" title="Using fallback data" />
+                  )}
+                </div>
                 <p className="text-muted-foreground mb-4">
                   Electronic & Synthwave Artist
                 </p>
                 
                 <div className="grid grid-cols-3 gap-4 mb-6 text-sm">
                   <div className="text-center">
-                    <div className="font-semibold text-primary">{mockData.zukenee.sounds.length}</div>
+                    <div className="font-semibold text-primary">{artists.zukenee.sounds.length}</div>
                     <div className="text-muted-foreground">Sounds</div>
                   </div>
                   <div className="text-center">
                     <div className="font-semibold text-spike-red">
-                      {mockData.zukenee.sounds.filter(s => s.isSpike).length}
+                      {artists.zukenee.sounds.filter(s => s.isSpike).length}
                     </div>
                     <div className="text-muted-foreground">Spiking</div>
                   </div>
                   <div className="text-center">
                     <div className="font-semibold text-growth-green">
-                      {mockData.zukenee.sounds.reduce((sum, s) => sum + s.dailyGrowth, 0).toLocaleString()}
+                      {artists.zukenee.sounds.reduce((sum, s) => sum + s.dailyGrowth, 0).toLocaleString()}
                     </div>
                     <div className="text-muted-foreground">Daily +</div>
                   </div>
@@ -93,9 +139,10 @@ const Index = () => {
                 size="xl"
                 onClick={() => navigate('/artist/zukenee')}
                 className="w-full group-hover:scale-105"
+                disabled={zukeneeLoading}
               >
                 <TrendingUp className="mr-2 h-5 w-5" />
-                View Analytics
+                {zukeneeLoading ? 'Loading...' : 'View Analytics'}
               </Button>
             </div>
           </Card>
@@ -115,18 +162,18 @@ const Index = () => {
                 
                 <div className="grid grid-cols-3 gap-4 mb-6 text-sm">
                   <div className="text-center">
-                    <div className="font-semibold text-primary">{mockData.bnyx.sounds.length}</div>
+                    <div className="font-semibold text-primary">{artists.bnyx.sounds.length}</div>
                     <div className="text-muted-foreground">Sounds</div>
                   </div>
                   <div className="text-center">
                     <div className="font-semibold text-spike-red">
-                      {mockData.bnyx.sounds.filter(s => s.isSpike).length}
+                      {artists.bnyx.sounds.filter(s => s.isSpike).length}
                     </div>
                     <div className="text-muted-foreground">Spiking</div>
                   </div>
                   <div className="text-center">
                     <div className="font-semibold text-growth-green">
-                      {mockData.bnyx.sounds.reduce((sum, s) => sum + s.dailyGrowth, 0).toLocaleString()}
+                      {artists.bnyx.sounds.reduce((sum, s) => sum + s.dailyGrowth, 0).toLocaleString()}
                     </div>
                     <div className="text-muted-foreground">Daily +</div>
                   </div>
@@ -152,8 +199,13 @@ const Index = () => {
         <div className="container mx-auto px-4 py-6">
           <div className="text-center text-muted-foreground">
             <p className="text-sm">
-              Live data updates • Spike detection • Mobile optimized
+              Live Google Sheets data • Spike detection • Mobile optimized
             </p>
+            {zukeneeSheetData.length > 0 && (
+              <p className="text-xs mt-1">
+                Last updated: {new Date().toLocaleTimeString()}
+              </p>
+            )}
           </div>
         </div>
       </div>
