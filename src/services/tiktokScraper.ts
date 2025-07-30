@@ -40,77 +40,171 @@ const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 class TikTokScraperService {
   private async fetchWithCORS(url: string): Promise<string> {
-    try {
-      // Try direct fetch first
-      const directResponse = await fetch(url, {
-        mode: 'no-cors',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      if (directResponse.ok) {
-        return await directResponse.text();
-      }
-    } catch (error) {
-      console.log('Direct fetch failed, trying CORS proxy...');
-    }
+    const proxies = [
+      'https://api.allorigins.win/raw?url=',
+      'https://cors-anywhere.herokuapp.com/',
+      'https://thingproxy.freeboard.io/fetch/'
+    ];
 
-    // Fallback to CORS proxy
-    try {
-      const proxyResponse = await fetch(CORS_PROXY + encodeURIComponent(url));
-      if (proxyResponse.ok) {
-        return await proxyResponse.text();
+    for (const proxy of proxies) {
+      try {
+        console.log(`Trying to fetch ${url} via ${proxy}`);
+        const proxyUrl = proxy + encodeURIComponent(url);
+        const response = await fetch(proxyUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          }
+        });
+        
+        if (response.ok) {
+          const html = await response.text();
+          console.log(`Successfully fetched HTML (${html.length} chars) via ${proxy}`);
+          return html;
+        }
+      } catch (error) {
+        console.log(`Proxy ${proxy} failed:`, error);
+        continue;
       }
-      throw new Error('CORS proxy failed');
-    } catch (error) {
-      throw new Error(`Failed to fetch ${url}: ${error}`);
     }
+    
+    throw new Error(`All CORS proxies failed for ${url}`);
   }
 
   private extractPostCount(html: string, xpath: string): number {
     try {
+      console.log(`Parsing HTML to extract post count...`);
+      
       // Parse HTML using DOMParser
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       
-      // Convert XPath to querySelector (simplified approach)
-      // For the given XPath, we'll look for h2 > h2 > strong pattern
-      const selectors = [
-        'h2 h2 strong',
-        '[data-e2e=\\\"music-post-count\\\"]',
-        '.music-detail-info strong',
-        'strong:contains(\\\"videos\\\")',
-        'h2 strong'
-      ];
-
-      for (const selector of selectors) {
-        const element = doc.querySelector(selector);
-        if (element) {
-          const text = element.textContent || '';
-          const match = text.match(/[\\d,]+/);
-          if (match) {
-            return parseInt(match[0].replace(/,/g, ''));
+      // Multiple strategies to find the post count
+      const strategies = [
+        // Strategy 1: Look for the specific structure h2 > h2 > strong
+        () => {
+          const elements = doc.querySelectorAll('h2 h2 strong, h2 > h2 > strong');
+          for (const element of elements) {
+            const text = element.textContent || '';
+            const match = text.match(/[\d,]+/);
+            if (match) {
+              console.log(`Found post count via h2>h2>strong: ${text}`);
+              return parseInt(match[0].replace(/,/g, ''));
+            }
           }
-        }
-      }
+          return 0;
+        },
 
-      // Fallback: look for any number pattern that could be post count
-      const bodyText = doc.body?.textContent || '';
-      const patterns = [
-        /(\d{1,3}(?:,\d{3})*)\s*videos?/i,
-        /(\d{1,3}(?:,\d{3})*)\s*posts?/i,
-        /(\d{1,3}(?:,\d{3})*)K?\s*creates?/i
+        // Strategy 2: Look for data attributes commonly used by TikTok
+        () => {
+          const selectors = [
+            '[data-e2e="music-post-count"]',
+            '[data-e2e="sound-post-count"]',
+            '[data-testid="music-post-count"]'
+          ];
+          
+          for (const selector of selectors) {
+            const element = doc.querySelector(selector);
+            if (element) {
+              const text = element.textContent || '';
+              const match = text.match(/[\d,]+/);
+              if (match) {
+                console.log(`Found post count via data attribute: ${text}`);
+                return parseInt(match[0].replace(/,/g, ''));
+              }
+            }
+          }
+          return 0;
+        },
+
+        // Strategy 3: Look for strong tags with numbers
+        () => {
+          const strongElements = doc.querySelectorAll('strong');
+          for (const element of strongElements) {
+            const text = element.textContent || '';
+            // Look for patterns like "1.2K posts", "5,432 videos", etc.
+            const patterns = [
+              /^([\d,]+(?:\.\d+)?[KMB]?)\s*(?:posts?|videos?|uses?|creates?)$/i,
+              /^([\d,]+)$/
+            ];
+            
+            for (const pattern of patterns) {
+              const match = text.trim().match(pattern);
+              if (match) {
+                let numStr = match[1].replace(/,/g, '');
+                let num: number;
+                if (numStr.includes('K')) {
+                  num = parseFloat(numStr.replace('K', '')) * 1000;
+                } else if (numStr.includes('M')) {
+                  num = parseFloat(numStr.replace('M', '')) * 1000000;
+                } else if (numStr.includes('B')) {
+                  num = parseFloat(numStr.replace('B', '')) * 1000000000;
+                } else {
+                  num = parseInt(numStr);
+                }
+                
+                if (num > 0) {
+                  console.log(`Found post count via strong tag: ${text} -> ${num}`);
+                  return Math.floor(num);
+                }
+              }
+            }
+          }
+          return 0;
+        },
+
+        // Strategy 4: Search entire document for post count patterns
+        () => {
+          const bodyText = doc.body?.textContent || '';
+          const patterns = [
+            /(\d{1,3}(?:,\d{3})*(?:\.\d+)?[KMB]?)\s*(?:posts?|videos?|uses?|creates?)/gi,
+            /"postCount":\s*(\d+)/gi,
+            /"videoCount":\s*(\d+)/gi
+          ];
+
+          for (const pattern of patterns) {
+            const matches = [...bodyText.matchAll(pattern)];
+            if (matches.length > 0) {
+              let bestMatch = 0;
+              for (const match of matches) {
+                let numStr = match[1].replace(/,/g, '');
+                let num: number;
+                if (numStr.includes('K')) {
+                  num = parseFloat(numStr.replace('K', '')) * 1000;
+                } else if (numStr.includes('M')) {
+                  num = parseFloat(numStr.replace('M', '')) * 1000000;
+                } else if (numStr.includes('B')) {
+                  num = parseFloat(numStr.replace('B', '')) * 1000000000;
+                } else {
+                  num = parseInt(numStr);
+                }
+                
+                if (num > bestMatch) {
+                  bestMatch = Math.floor(num);
+                }
+              }
+              
+              if (bestMatch > 0) {
+                console.log(`Found post count via text search: ${bestMatch}`);
+                return bestMatch;
+              }
+            }
+          }
+          return 0;
+        }
       ];
 
-      for (const pattern of patterns) {
-        const match = bodyText.match(pattern);
-        if (match) {
-          return parseInt(match[1].replace(/,/g, ''));
+      // Try each strategy until we find a result
+      for (const strategy of strategies) {
+        const result = strategy();
+        if (result > 0) {
+          return result;
         }
       }
 
+      console.log('Could not extract post count from HTML');
       return 0;
+
     } catch (error) {
       console.error('Error extracting post count:', error);
       return 0;
@@ -176,23 +270,30 @@ class TikTokScraperService {
     try {
       console.log(`Scraping ${config.name}: ${config.url}`);
       
-      // For demo purposes, generate mock data since actual scraping will face CORS
-      // In production, this should be done via Supabase Edge Functions
-      const mockPosts = Math.floor(Math.random() * 10000) + 1000;
+      // Fetch the actual TikTok page
+      const html = await this.fetchWithCORS(config.url);
+      
+      // Extract post count using the provided XPath strategy
+      const totalPosts = this.extractPostCount(html, config.xpath);
+      
+      if (totalPosts === 0) {
+        console.warn(`No post count found for ${config.name}, using fallback`);
+        // If we can't extract, don't return null - return with 0 posts
+      }
       
       const scrapedData: ScrapedSoundData = {
         id: config.id,
         name: config.name,
         url: config.url,
-        totalPosts: mockPosts,
+        totalPosts,
         lastUpdated: new Date().toISOString(),
         scrapedAt: new Date()
       };
 
       // Update historical data
-      this.updateSoundHistory(config.id, mockPosts);
+      this.updateSoundHistory(config.id, totalPosts);
 
-      console.log(`Successfully scraped ${config.name}: ${mockPosts} posts`);
+      console.log(`Successfully scraped ${config.name}: ${totalPosts} posts`);
       return scrapedData;
 
     } catch (error) {
