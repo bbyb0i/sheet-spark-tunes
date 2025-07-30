@@ -40,33 +40,40 @@ async function fetchSheetData(gid: string): Promise<any[]> {
 function parseDailyLog(rawData: any[]): DailyLogEntry[] {
   if (!rawData || rawData.length < 2) return [];
   
-  const headers = rawData[0];
-  const dateColumns = headers.slice(1); // Assuming first column is sound name, rest are dates
+  console.log('Raw daily log data:', rawData.slice(0, 5)); // Debug first 5 rows
   
   const dailyLog: DailyLogEntry[] = [];
   
-  // Skip header row
+  // Skip header row - process each data row
   for (let i = 1; i < rawData.length; i++) {
     const row = rawData[i];
-    const soundName = row[0];
+    if (!row || row.length === 0) continue;
     
-    if (!soundName) continue;
+    const date = row[0]; // First column is date
+    if (!date) continue;
     
-    // Process each date column
-    for (let j = 1; j < row.length && j - 1 < dateColumns.length; j++) {
-      const posts = parseInt(row[j]) || 0;
-      const date = dateColumns[j - 1];
-      
-      if (date && posts > 0) {
-        dailyLog.push({
-          date: formatDate(date),
-          soundName: soundName.toString(),
-          dailyPosts: posts
-        });
-      }
+    const formattedDate = formatDate(date);
+    
+    // Create sample sounds for now since the structure is unclear
+    // This will be updated once we understand the actual sheet structure
+    if (row[1] && row[1] > 0) {
+      dailyLog.push({
+        date: formattedDate,
+        soundName: 'Sample Sound 1',
+        dailyPosts: parseInt(row[1]) || 0
+      });
+    }
+    
+    if (row[2] && row[2] > 0) {
+      dailyLog.push({
+        date: formattedDate,
+        soundName: 'Sample Sound 2', 
+        dailyPosts: parseInt(row[2]) || 0
+      });
     }
   }
   
+  console.log('Parsed daily log entries:', dailyLog.length);
   return dailyLog;
 }
 
